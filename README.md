@@ -1,4 +1,12 @@
-# SOTAgent
+<div align="center">
+
+<h1>SOTAgent</h1>
+
+<img src="https://img.shields.io/badge/Incomplete-0b7dbe?style=plastic" alt="Static Badge" />
+
+</div>
+
+
 > [!NOTE]
 > The SOTAgent has not been released yet. It is currently under development. Therefore, you can only deploy it locally on Google ADK for now. We will further optimize it and turn it into an online service later. Stay tuned!
 

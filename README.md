@@ -64,3 +64,10 @@ uv run adk web
 
 ## 💕 Thanks for using SOTAgent!
 If you have any questions or suggestions, please feel free to contact me. My email address is [Emali](mailto:YinZhaokai2006@outlook.com).
+
+<div align="center">
+Last update: 2025.11.17
+</div>
+
+
+---

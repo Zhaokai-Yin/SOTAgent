@@ -16,13 +16,13 @@ With the rapid increase in the number of AI conferences and papers, selecting a 
 ---
 
 ## ❗️ How to use SOTAgent(Version 1.0)?
-#### 1. Install the SOTAgent
+### 1. Install the SOTAgent
 You can **clone** the SOTAgent to your local environment by running the following command:  
 ```bash
 git clone https://github.com/Zhaokai-Yin/SOTAgent.git
 ```
 or **download** the SOTAgent from the GitHub repository and extract it to your local environment.  
-#### 2. Set the environment variable
+### 2. Set the environment variable
 **First**, you need to download a modern package manager library - `uv`. Choose one of the following three instructions depending on your Python installation method.  
 ```bash
 pip install uv
@@ -43,7 +43,7 @@ or
 pip install -r requirements.txt
 ```
 
-#### 3. Use the SOTAgent
+### 3. Use the SOTAgent
 **First**, you need an **_AI API KEY_** to use the SOTAgent.  By default, the program calls Gemini's API. You can GET the Gemini API KEY from [here](https://aistudio.google.com/). If you want to use the API of other AI platforms, you need to modify the code in the `agent.py` file.  
 
 **Second**, when you have the API KEY, you need to put the API KEY into a `.env` file which should be created in the folder `.My_First_Agent`. The `.env` file should contain the following content:  

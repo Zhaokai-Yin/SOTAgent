@@ -5,6 +5,7 @@ import json
 import os
 from typing import List, Dict, Any, Tuple, Set, Optional
 import re
+import time
 from datetime import datetime, timedelta
 from google.adk.models.lite_llm import LiteLlm
 
@@ -262,12 +263,35 @@ def _extract_constraints(title: str, summary: str) -> Dict[str, Any]:
 
 # ------------------- 数据集与指标抽取及方向配置 -------------------
 _DATASET_PATTERNS: Dict[str, List[str]] = {
-    # 跟踪常见数据集（示例）
+    # 跟踪常见数据集
     "LaSOT": [r"\blasot\b"],
     "GOT-10k": [r"\bgot[- ]?10k\b"],
     "OTB": [r"\botb(?:50|100)?\b"],
     "TrackingNet": [r"\btrackingnet\b"],
     "TNL2K": [r"\btnl2k\b"],
+    # VLA (Vision-Language-Action) 常见数据集
+    "RT-1": [r"\brt[- ]?1\b", r"\brobot transformer[- ]?1\b"],
+    "RT-2": [r"\brt[- ]?2\b", r"\brobot transformer[- ]?2\b"],
+    "RT-X": [r"\brt[- ]?x\b", r"\brobot transformer[- ]?x\b"],
+    "Open-X Embodiment": [r"\bopen[- ]?x embodiment\b", r"\bopenx\b"],
+    "Bridge": [r"\bbridge dataset\b", r"\bbridge v2\b"],
+    "LIBERO": [r"\blibero\b"],
+    "Calvin": [r"\bcalvin\b"],
+    "Language-Table": [r"\blanguage[- ]?table\b", r"\blangtable\b"],
+    "ALFRED": [r"\balfred\b"],
+    "Meta-World": [r"\bmeta[- ]?world\b"],
+    "SayCan": [r"\bsaycan\b"],
+    "BC-Z": [r"\bbcz\b", r"\bbehavior cloning[- ]?z\b"],
+    "PaLM-E": [r"\bpalm[- ]?e\b"],
+    "Gato": [r"\bgato\b"],
+    "MOO": [r"\bmoo\b", r"\bmultimodal open[- ]?world\b"],
+    "RoboMimic": [r"\brobomimic\b"],
+    "MIME": [r"\bmime\b"],
+    "RoboTurk": [r"\broboturk\b"],
+    "Dactyl": [r"\bdactyl\b"],
+    "RLBench": [r"\brlbench\b"],
+    "WidowX": [r"\bwidowx\b"],
+    "PALM-E": [r"\bpalm[- ]?e\b"],
 }
 _DATASET_METRIC_CONFIG: Dict[str, Dict[str, Any]] = {
     # 每个数据集的主指标与方向（True=越大越好）
@@ -276,7 +300,27 @@ _DATASET_METRIC_CONFIG: Dict[str, Dict[str, Any]] = {
     "OTB": {"primary": ["success", "precision"], "larger_is_better": True},
     "TrackingNet": {"primary": ["success", "precision"], "larger_is_better": True},
     "TNL2K": {"primary": ["success", "precision"], "larger_is_better": True},
+    # VLA 数据集指标配置
+    "RT-1": {"primary": ["success_rate", "task_success", "avg_success"], "larger_is_better": True},
+    "RT-2": {"primary": ["success_rate", "task_success", "avg_success"], "larger_is_better": True},
+    "RT-X": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "Open-X Embodiment": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "Bridge": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "LIBERO": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "Calvin": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "Language-Table": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "ALFRED": {"primary": ["success_rate", "goal_condition_success"], "larger_is_better": True},
+    "Meta-World": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
+    "RLBench": {"primary": ["success_rate", "task_success"], "larger_is_better": True},
 }
+
+# VLA 常见数据集列表
+_VLA_BENCHMARKS = [
+    "RT-1", "RT-2", "RT-X", "Open-X Embodiment", "Bridge", 
+    "LIBERO", "Calvin", "Language-Table", "ALFRED", "Meta-World",
+    "SayCan", "BC-Z", "PaLM-E", "Gato", "MOO", "RoboMimic",
+    "MIME", "RoboTurk", "Dactyl", "RLBench", "WidowX", "PALM-E"
+]
 
 def _detect_datasets(text: str) -> List[str]:
     tl = text.lower()
@@ -298,8 +342,103 @@ def _score_key_for_dataset(metric_score: Optional[float], datasets: List[str]) -
         return -1.0
     return metric_score if datasets else (metric_score * 0.95)
 
-def get_latest_sota(benchmark: str, window_days: int = 365, max_results: int = 100, scope: str = "overall", constraints: Optional[Dict[str, Any]] = None) -> str:
+def get_latest_sota(
+    benchmark: Optional[str] = None, 
+    query: Optional[str] = None,
+    window_days: Optional[int] = None, 
+    max_results: Optional[int] = None, 
+    scope: Optional[str] = None, 
+    constraints: Optional[Dict[str, Any]] = None
+) -> str:
     """
+    查询最新 SOTA 模型（支持自然语言查询和直接参数两种方式）。
+    
+    方式1 - 自然语言查询（推荐）：
+        传入 query 参数，例如：
+        - query="找 GOT-10k 上纯监督、不要自监督、近一年最新的 SOTA，且不使用额外数据"
+        - query="RT-1 数据集上最新的 SOTA 模型"
+        - query="VLA 领域最近半年的 SOTA"
+    
+    方式2 - 直接参数：
+        benchmark: 基准名称，例如 "RT-1", "GOT-10k" 等
+        window_days: 搜索时间窗口（天数），默认 365 天
+        max_results: 最大结果数，默认 100
+        scope: 可选 "overall"（默认）、"self-supervised"、"supervised"、"semi-supervised"、"weakly-supervised"、"unsupervised"、"zero-shot"、"few-shot"
+        constraints: 可选约束条件，格式为 {data_regime:[], modality:[], tricks:[], resources:[], require_dataset:bool}
+    
+    如果同时提供了 query 和 benchmark，query 优先。
+    如果只提供了一个字符串参数且长度较长（>10字符），则自动识别为自然语言查询。
+    """
+    # 智能判断：如果只传入了一个位置参数且是长字符串，或提供了 query，则使用自然语言解析
+    use_nl = False
+    nl_query = None
+    
+    # 检查是否提供了 query 参数
+    if query:
+        nl_query = query
+        use_nl = True
+    # 如果只提供了 benchmark 且是长字符串，可能也是自然语言
+    elif benchmark and len(benchmark) > 30 and not all(c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.' for c in benchmark):
+        nl_query = benchmark
+        use_nl = True
+    # 如果 benchmark 很短或看起来像是数据集名称，且有其他参数，则使用直接参数模式
+    elif benchmark:
+        use_nl = False
+    else:
+        return json.dumps({
+            "error": "请提供 benchmark 参数或 query 参数（自然语言查询）",
+            "example_nl": "query='找 GOT-10k 上最新的 SOTA 模型'",
+            "example_direct": "benchmark='GOT-10k', window_days=365"
+        }, ensure_ascii=False, indent=2)
+    
+    # 自然语言模式：解析并调用核心函数
+    if use_nl and nl_query:
+        parsed_benchmark = _nl_detect_benchmark(nl_query)
+        include_scopes, exclude_scopes, strict_scope = _nl_detect_scopes(nl_query)
+        parsed_constraints = _nl_detect_constraints(nl_query)
+        if include_scopes:
+            parsed_constraints["include_scopes"] = sorted(list(include_scopes))
+        if exclude_scopes:
+            parsed_constraints["exclude_scopes"] = sorted(list(exclude_scopes))
+        if strict_scope:
+            parsed_constraints["strict_scope"] = True
+        parsed_window_days = _nl_detect_window_days(nl_query, 365) if nl_query else 365
+        parsed_max_results = 150  # 自然语言查询默认更多结果
+        parsed_scope = "overall"
+        
+        # 使用解析后的参数调用核心函数
+        return _get_latest_sota_core(
+            benchmark=parsed_benchmark,
+            window_days=parsed_window_days,
+            max_results=parsed_max_results,
+            scope=parsed_scope,
+            constraints=parsed_constraints
+        )
+    
+    # 直接参数模式：使用提供的参数，如果未提供则使用默认值
+    if not benchmark:
+        return json.dumps({
+            "error": "请提供 benchmark 参数或 query 参数（自然语言查询）",
+            "example_nl": "query='找 GOT-10k 上最新的 SOTA 模型'",
+            "example_direct": "benchmark='GOT-10k', window_days=365"
+        }, ensure_ascii=False, indent=2)
+    
+    final_window_days = window_days if window_days is not None else 365
+    final_max_results = max_results if max_results is not None else 100
+    final_scope = scope if scope is not None else "overall"
+    final_constraints = constraints if constraints is not None else {}
+    
+    return _get_latest_sota_core(
+        benchmark=benchmark,
+        window_days=final_window_days,
+        max_results=final_max_results,
+        scope=final_scope,
+        constraints=final_constraints
+    )
+
+def _get_latest_sota_core(benchmark: str, window_days: int = 365, max_results: int = 100, scope: str = "overall", constraints: Optional[Dict[str, Any]] = None) -> str:
+    """
+    核心 SOTA 查询逻辑（内部函数）。
     根据关键词检索近 window_days 天的论文，启发式识别 SOTA，返回包含最新 SOTA 的 JSON。
     scope 可选：overall（默认）、self-supervised、supervised、semi-supervised、weakly-supervised、unsupervised、zero-shot、few-shot
     constraints 可选：{data_regime:[], modality:[], tricks:[], resources:[], require_dataset:bool}
@@ -631,28 +770,6 @@ def _nl_detect_window_days(text: str, default_days: int = 365) -> int:
         return 180
     return default_days
 
-def sota_by_nl(query: str) -> str:
-    """
-    自然语言查询最新 SOTA（支持中文）：自动解析 benchmark / scope / constraints / 时间窗口。
-    例：'找 GOT-10k 上纯监督、不要自监督、近一年最新的 SOTA，且不使用额外数据'
-    """
-    benchmark = _nl_detect_benchmark(query)
-    include_scopes, exclude_scopes, strict_scope = _nl_detect_scopes(query)
-    constraints = _nl_detect_constraints(query)
-    if include_scopes:
-        constraints["include_scopes"] = sorted(list(include_scopes))
-    if exclude_scopes:
-        constraints["exclude_scopes"] = sorted(list(exclude_scopes))
-    if strict_scope:
-        constraints["strict_scope"] = True
-    window_days = _nl_detect_window_days(query, 365)
-    return get_latest_sota(
-        benchmark=benchmark,
-        window_days=window_days,
-        max_results=150,
-        scope="overall",
-        constraints=constraints
-    )
 
 def recent_by_nl(query: str) -> str:
     """
@@ -676,6 +793,157 @@ def recent_by_nl(query: str) -> str:
         constraints=constraints
     )
 
+def list_common_benchmarks(domain: str = "vla", include_sota: bool = False) -> str:
+    """
+    快速列出常见 Benchmark 列表（不查询 SOTA，速度很快）。
+    
+    Args:
+        domain: 领域名称，可选 "vla" (Vision-Language-Action), "tracking" 等，默认为 "vla"
+        include_sota: 是否同时查询 SOTA（会显著增加耗时），默认为 False
+        
+    Returns:
+        JSON 字符串，包含 Benchmark 列表信息
+    """
+    # 根据领域选择对应的数据集列表
+    if domain.lower() == "vla" or domain.lower() == "vision-language-action":
+        benchmarks = _VLA_BENCHMARKS
+    elif domain.lower() == "tracking":
+        benchmarks = ["LaSOT", "GOT-10k", "OTB", "TrackingNet", "TNL2K"]
+    else:
+        # 默认返回所有支持的数据集
+        benchmarks = _VLA_BENCHMARKS + ["LaSOT", "GOT-10k", "OTB", "TrackingNet", "TNL2K"]
+    
+    results: Dict[str, Any] = {
+        "domain": domain,
+        "benchmarks": [{"name": b, "has_sota_info": False} for b in benchmarks],
+        "total_benchmarks": len(benchmarks),
+        "updated_at": datetime.utcnow().isoformat(),
+        "note": "使用 list_common_benchmarks_with_sota 可以查询详细的 SOTA 信息"
+    }
+    
+    if include_sota:
+        # 如果需要查询 SOTA，调用详细版本
+        return list_common_benchmarks_with_sota(domain=domain, window_days=730, max_results_per_benchmark=30)
+    
+    return json.dumps(results, ensure_ascii=False, indent=2)
+
+def list_common_benchmarks_with_sota(domain: str = "vla", window_days: int = 730, max_results_per_benchmark: int = 30, 
+                                     delay_seconds: float = 3.0, max_benchmarks: Optional[int] = None) -> str:
+    """
+    列出常见 Benchmark 及其对应的 SOTA 模型（需要较长时间，因为要查询 arXiv）。
+    
+    Args:
+        domain: 领域名称，可选 "vla" (Vision-Language-Action), "tracking" 等，默认为 "vla"
+        window_days: 搜索时间窗口（天数），默认 730 天（约2年）
+        max_results_per_benchmark: 每个数据集最多检索的论文数量，默认 30（减少以提高速度）
+        delay_seconds: 每个 Benchmark 查询之间的延迟（秒），默认 3.0 秒，避免触发 arXiv 速率限制
+        max_benchmarks: 最多处理的 Benchmark 数量（None 表示处理全部），默认 None
+        
+    Returns:
+        JSON 字符串，包含每个 Benchmark 及其对应的最新 SOTA 模型信息
+    """
+    # 根据领域选择对应的数据集列表
+    if domain.lower() == "vla" or domain.lower() == "vision-language-action":
+        benchmarks = _VLA_BENCHMARKS
+    elif domain.lower() == "tracking":
+        benchmarks = ["LaSOT", "GOT-10k", "OTB", "TrackingNet", "TNL2K"]
+    else:
+        # 默认返回所有支持的数据集
+        benchmarks = _VLA_BENCHMARKS + ["LaSOT", "GOT-10k", "OTB", "TrackingNet", "TNL2K"]
+    
+    # 如果设置了最大数量，只处理前面的
+    if max_benchmarks is not None and max_benchmarks > 0:
+        benchmarks = benchmarks[:max_benchmarks]
+    
+    results: Dict[str, Any] = {
+        "domain": domain,
+        "window_days": window_days,
+        "benchmarks": [],
+        "total_benchmarks": len(benchmarks),
+        "processed": 0,
+        "successful": 0,
+        "failed": 0,
+        "updated_at": datetime.utcnow().isoformat(),
+        "note": "查询 SOTA 需要时间，请耐心等待。如需快速获取 Benchmark 列表，请使用 list_common_benchmarks"
+    }
+    
+    print(f"正在搜索 {len(benchmarks)} 个 {domain.upper()} Benchmark 的 SOTA 模型（每个查询间隔 {delay_seconds} 秒）...")
+    print(f"提示：这个过程可能需要几分钟，请耐心等待...")
+    
+    for idx, benchmark in enumerate(benchmarks, 1):
+        print(f"[{idx}/{len(benchmarks)}] 处理 Benchmark: {benchmark}...")
+        try:
+            # 获取该 Benchmark 的最新 SOTA
+            sota_result = get_latest_sota(
+                benchmark=benchmark,
+                window_days=window_days,
+                max_results=max_results_per_benchmark,
+                scope="overall",
+                constraints=None
+            )
+            sota_data = json.loads(sota_result)
+            
+            benchmark_info = {
+                "benchmark": benchmark,
+                "sota": sota_data.get("sota"),
+                "top_candidates": sota_data.get("top_candidates", [])[:3],  # 只保留前3个候选
+                "has_sota": sota_data.get("sota") is not None
+            }
+            
+            # 如果找到了 SOTA，添加模型名称（从标题中提取）
+            if benchmark_info["has_sota"] and benchmark_info["sota"]:
+                title = benchmark_info["sota"].get("title", "")
+                # 尝试从标题中提取模型名称（通常是标题的第一部分或引号中的内容）
+                model_name_match = re.search(r'"([^"]+)"|([A-Z][a-z]+[- ]?[A-Z]?[a-z]*[0-9]?)', title)
+                if model_name_match:
+                    model_name = model_name_match.group(1) or model_name_match.group(2)
+                    benchmark_info["model_name"] = model_name
+                else:
+                    # 如果没有找到引号，尝试使用标题的前几个词
+                    words = title.split()
+                    if len(words) > 0:
+                        benchmark_info["model_name"] = " ".join(words[:5])
+                    else:
+                        benchmark_info["model_name"] = title[:50]
+                results["successful"] += 1
+                print(f"  ✓ 找到 SOTA: {benchmark_info.get('model_name', 'N/A')}")
+            else:
+                print(f"  - 未找到 SOTA")
+            
+            results["benchmarks"].append(benchmark_info)
+            results["processed"] += 1
+            
+            # 除了最后一个，其他查询后添加延迟
+            if idx < len(benchmarks):
+                print(f"  等待 {delay_seconds} 秒以避免触发速率限制...")
+                time.sleep(delay_seconds)
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"  ✗ 处理 {benchmark} 时出错: {error_msg[:100]}")
+            results["benchmarks"].append({
+                "benchmark": benchmark,
+                "error": error_msg,
+                "has_sota": False
+            })
+            results["processed"] += 1
+            results["failed"] += 1
+            
+            # 如果是速率限制错误，等待更长时间
+            if "429" in error_msg or "rate limit" in error_msg.lower():
+                wait_time = delay_seconds * 3
+                print(f"  检测到速率限制，等待 {wait_time} 秒...")
+                time.sleep(wait_time)
+            elif idx < len(benchmarks):
+                time.sleep(delay_seconds)
+    
+    # 统计找到 SOTA 的数量
+    results["found_sota_count"] = sum(1 for b in results["benchmarks"] if b.get("has_sota", False))
+    
+    print(f"\n完成！处理了 {results['processed']} 个 Benchmark，成功找到 {results['found_sota_count']} 个 SOTA，失败 {results['failed']} 个")
+    
+    return json.dumps(results, ensure_ascii=False, indent=2)
+
 use_model = "gemini"
 
 if use_model == "deepseek":
@@ -690,10 +958,25 @@ root_agent = Agent(
     name="search_papers_agent",
     model=model,
     description=(
-        "Agent to answer questions about the papers."
+        "Agent to answer questions about papers, benchmarks, and SOTA models. "
+        "Can list common benchmarks with their corresponding SOTA models, especially for VLA (Vision-Language-Action) domain."
     ),
     instruction=(
-        "You are a helpful agent who can answer user questions about the papers."
+        "You are a helpful agent specialized in answering questions about papers, benchmarks, and State-of-the-Art (SOTA) models. "
+        "You can:\n"
+        "1. Search for papers on specific topics or benchmarks\n"
+        "2. Find the latest SOTA models for specific benchmarks (supports both natural language queries and direct parameters)\n"
+        "3. List common benchmarks (especially VLA benchmarks) with their corresponding SOTA models\n"
+        "4. Answer questions about research papers and their results\n\n"
+        "The get_latest_sota function supports two modes:\n"
+        "- Natural language mode: Use query parameter, e.g., query='找 GOT-10k 上最新的 SOTA 模型' or query='RT-1 数据集上纯监督的 SOTA'\n"
+        "- Direct parameter mode: Use benchmark, window_days, scope, constraints parameters directly\n"
+        "The function will automatically detect which mode to use based on the input.\n\n"
+        "When users ask about common benchmarks (e.g., 'VLA常用数据集及其对应的SOTA模型', '常见Benchmark的SOTA模型'), "
+        "you should use the list_common_benchmarks or list_common_benchmarks_with_sota function to provide a comprehensive list of benchmarks "
+        "and their corresponding latest SOTA models. Always respond in Chinese (简体中文) when the user asks in Chinese.\n\n"
+        "If a user asks for a list of common benchmarks or datasets with their SOTA models, you should directly call "
+        "list_common_benchmarks or list_common_benchmarks_with_sota with the appropriate domain parameter (e.g., 'vla' for Vision-Language-Action)."
     ),
     tools=[
         search_papers,
@@ -701,7 +984,8 @@ root_agent = Agent(
         find_papers_by_benchmark,
         get_latest_sota,
         list_recent_papers,
-        sota_by_nl,
         recent_by_nl,
+        list_common_benchmarks,
+        list_common_benchmarks_with_sota,
     ],
 )

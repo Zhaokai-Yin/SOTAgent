@@ -7,6 +7,8 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
 .env
+# 如果需要将 .venv 也打包，取消下面的注释并注释掉 .venv/ 行
+# .venv/
+!.venv/
 

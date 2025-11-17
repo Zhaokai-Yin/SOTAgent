@@ -16,6 +16,10 @@ With the rapid increase in the number of AI conferences and papers, selecting a 
 ---
 
 ## ❗️ How to use SOTAgent(Version 1.0)?
+
+> [!Warning]
+> The SOTAgent is build on Windows. If you want to use it on Linux, you need to modify the `.venv` folder to adapt to the Linux environment.
+
 ### 1. Install the SOTAgent
 You can **clone** the SOTAgent to your local environment by running the following command:  
 ```bash
@@ -59,7 +63,7 @@ uv run adk web
 
 ---
 
->[Warning]
+> [!Warning]
 > The SOTAgent is still in development and may not work as expected. Please use it with caution.
 
 ## 💕 Thanks for using SOTAgent!
